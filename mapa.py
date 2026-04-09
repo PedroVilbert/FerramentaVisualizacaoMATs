@@ -8,11 +8,14 @@
 
 from io import StringIO
 import dash  # Importa a biblioteca Dash para criação da aplicação web interativa
+from collections import defaultdict
+from math import cos, sin, pi
 import plotly.graph_objects as go  # Importa plotly.graph_objects para gráficos customizados
 from dash import Dash, dcc, html, Input, Output, State  # Importa componentes do Dash para construir layout e callbacks
 import os
 from dash import dcc
 import re
+import pandas as pd  # Importa pandas explicitamente
 
 #bibliotecas mat
 from matdata.dataset import *  # Importa funções para carregar datasets do pacote matdata
@@ -62,6 +65,7 @@ app.layout = html.Div([  # Define layout principal como uma Div
     ), #Botão de upload
     html.Div(id='upload-output'),  # Aqui aparecerá o resultado (mensagem de sucesso/erro)
     dcc.Store(id='store-data', storage_type='memory'),
+    dcc.Store(id='selected-trajectory', storage_type='memory', data=None),  # Store para trajetória selecionada
 
     html.Div([
         
@@ -204,10 +208,20 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
     all_lats = []  # Lista para armazenar todas latitudes dos pontos para centralizar mapa
     all_lons = []  # Lista para armazenar todas longitudes
     
-    print("Quantidade de trajetórias:", len(T_local))
+    # Contagem para pontos que ficam exatamente no mesmo local
+    location_counts = defaultdict(int)
     
+    print("Quantidade de trajetórias:", len(T_local))
 
-    for i in range(inicio, fim):
+    if inicio is None:
+        inicio = 0
+    if fim is None:
+        fim = len(T_local) - 1
+    inicio = max(0, int(inicio))
+    fim = min(len(T_local) - 1, int(fim))
+    single_mode = inicio == fim
+    
+    for i in range(inicio, fim + 1):
         traj = T_local[i]
         
         if not traj.points:
@@ -238,28 +252,75 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
         espessura = 2
 
         hover_texts = []  # Lista que conterá o texto do tooltip para cada ponto
-        
+        marker_lats = []
+        marker_lons = []
+
         for j, p in enumerate(traj.points):  # Para cada ponto na trajetória
             
             # Nome do local (aspecto 3)
             try:
-                titulo = f"{p.aspects[3].value}"
+                titulo_local = f"{p.aspects[3].value}"
             except:
-                titulo = "Local"
+                titulo_local = "Local"
 
-            # Monta linhas com colunas selecionadas
-            partes = [
-                f"{c}: {fca.extrair_valor(c, p, data_desc_local)}"
-                for c in colunas_selecionadas
-            ]
+            # Lista de movelets que incluem este ponto
+            movelet_nums = []
+            for idx_mov, mov_info in enumerate(movelets_info):
+                if mov_info['start'] <= j <= mov_info['end']:
+                    mov_obj = mov_info.get('movelet')
+                    if mov_obj is not None and hasattr(mov_obj, 'mid'):
+                        try:
+                            movelet_num = int(mov_obj.mid) + 1
+                        except Exception:
+                            movelet_num = idx_mov + 1
+                    else:
+                        movelet_num = idx_mov + 1
+                    movelet_nums.append(movelet_num)
 
-            # Se a trajetória tem movelet, adiciona flag visual
-            if tem_movelet:
-                num_movelets = len(traj_movelets[traj.tid])
-                texto = "<br>".join([titulo] + partes + [f"🚩 MOVELET ({num_movelets} encontrada(s))"])
+            movelets_do_ponto = [f"M.{n}" for n in sorted(set(movelet_nums))]
+
+            if movelets_do_ponto:
+                titulo = f"T.{traj.tid} p{j+1} - {' '.join([f'M[{n}]' for n in sorted(set(movelet_nums))])}"
+                titulo = f"{titulo}<br>{titulo_local}"
             else:
-                texto = "<br>".join([titulo] + partes)
+                titulo = f"T.{traj.tid} p{j+1}<br>{titulo_local}"
 
+            # Monta linhas com colunas selecionadas e marca [M*] apenas nos atributos que pertencem à movelet
+            partes = []
+            for c in colunas_selecionadas:
+                valor = str(fca.extrair_valor(c, p, data_desc_local))
+                
+                # Verifica se o atributo atual pertence a alguma movelet do ponto
+                mostra_movelet = False
+                if c not in ['lat', 'lon', 'Ponto'] and movelets_do_ponto:
+                    for idx_mov, mov_info in enumerate(movelets_info):
+                        if mov_info['start'] <= j <= mov_info['end']:
+                            mov_obj = mov_info.get('movelet')
+                            # Verifica se a coluna atual está nos atributos da movelet
+                            if mov_obj is not None and hasattr(mov_obj, 'attribute_names'):
+                                if c in mov_obj.attribute_names:
+                                    mostra_movelet = True
+                                    break
+                
+                if mostra_movelet:
+                    valor += f" [{', '.join(movelets_do_ponto)}]"
+                
+                partes.append(f"{c}: {valor}")
+
+            texto = "<br>".join([titulo] + partes)
+            point_key = (lats[j], lons[j])
+            location_counts[point_key] += 1
+            count = location_counts[point_key]
+            display_lat = lats[j]
+            display_lon = lons[j]
+            if count > 1:
+                angle = 2 * pi * (count - 1) / 6
+                radius = 0.00003 * ((count - 1) // 6 + 1)
+                display_lon += radius * cos(angle)
+                display_lat += radius * sin(angle)
+
+            marker_lats.append(display_lat)
+            marker_lons.append(display_lon)
             hover_texts.append(texto)
 
         # Desenha a trajetória completa como base (sinaliza no nome se há movelet)
@@ -274,7 +335,21 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
             line={'width': espessura, 'color': cor_traj},
             name=label_traj,
             legendgroup=f"traj{i}",
+            hoverinfo='skip',
             showlegend=True
+        ))
+
+        fig.add_trace(go.Scattermap(
+            mode='markers',
+            lon=marker_lons,
+            lat=marker_lats,
+            marker={'size': 12, 'color': cor_traj, 'opacity': 0.9, 'symbol': 'circle', 'allowoverlap': True},
+            name=f'Pontos {traj.tid}',
+            legendgroup=f"traj{i}",
+            hovertext=hover_texts,
+            hovertemplate="%{hovertext}<extra></extra>",
+            hoverlabel={'align': 'left'},
+            showlegend=False
         ))
 
         # Se houver movelets, desenha apenas o(s) trecho(s) de movelet em destaque vermelho
@@ -290,31 +365,46 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
                 seg_lats = lats[start:end + 1]
                 seg_lons = lons[start:end + 1]
 
+                # Se movelet tem apenas um ponto, usa markers; senão, lines
+                if len(seg_lats) == 1:
+                    mode = 'markers'
+                    marker = {'size': 10, 'color': 'red'}
+                    line = {}
+                else:
+                    mode = 'lines'
+                    line = {'width': 6, 'color': 'red'}
+                    marker = {}
+
+                # Extrai os atributos e número da movelet
+                mov_obj = mov_info.get('movelet')
+                if mov_obj is not None and hasattr(mov_obj, 'attribute_names'):
+                    atributos_str = ', '.join(mov_obj.attribute_names)
+                else:
+                    atributos_str = 'N/A'
+                
+                # Extrai o número do movelet (mid)
+                if mov_obj is not None and hasattr(mov_obj, 'mid'):
+                    try:
+                        movelet_num = int(mov_obj.mid) + 1
+                    except Exception:
+                        movelet_num = idx_mov + 1
+                else:
+                    movelet_num = idx_mov + 1
+
                 fig.add_trace(go.Scattermap(
-                    mode='lines',
+                    mode=mode,
                     lon=seg_lons,
                     lat=seg_lats,
-                    line={'width': 6, 'color': 'red'},
+                    line=line,
+                    marker=marker,
                     name=f'Movelets trajetória {traj.tid}',
                     legendgroup=f"movelets{traj.tid}",
+                    hoverinfo='skip',
                     showlegend=not movelet_legend_shown,
-                    hovertemplate=f'Movelet {idx_mov+1} da Trajetória {traj.tid}<br>Índice inicial: {start}<br>Índice final: {end}<br>Tamanho: {mov_info["size"]}<extra></extra>'
+                    hovertemplate=f'[M {movelet_num}] Movelet {idx_mov+1} da Trajetória {traj.tid}<br>Índice inicial: {start}<br>Índice final: {end}<br>Tamanho: {mov_info["size"]}<br>Atributos: {atributos_str}<extra></extra>'
                 ))
 
                 movelet_legend_shown = True
-
-        # Pontos da trajetória
-        fig.add_trace(go.Scattermap(
-            mode='markers',
-            lon=lons,
-            lat=lats,
-            marker={'size': 8, 'color': cor_traj},
-            name=f'Pontos T{i+1}',
-            customdata=[[text] for text in hover_texts],
-            hovertemplate="%{customdata[0]}<extra></extra>",
-            legendgroup=f"traj{i}",
-            showlegend=False
-        ))
 
     print("Total latitudes coletadas:", len(all_lats))
     
@@ -332,7 +422,8 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
         margin={"r": 0, "t": 30, "l": 0, "b": 0},
         height=700,
         title="Múltiplas Trajetórias no Mapa",
-        showlegend=True
+        showlegend=True,
+        hovermode='closest'
     )
 
     return fig
@@ -480,6 +571,115 @@ def atualizar_limites_inputs(json_data):
     texto_info = f"Total de trajetórias: {total}"
 
     return total, total, texto_info
+
+# Callback para capturar cliques na legenda e selecionar uma trajetória
+@app.callback(
+    Output('selected-trajectory', 'data'),
+    Input('mapa', 'clickData'),
+    prevent_initial_call=True
+)
+def selecionar_trajetoria(clickData):
+    """Captura cliques na legenda para selecionar uma trajetória específica.
+    
+    Args:
+        clickData: Dados do clique no gráfico.
+        
+    Returns:
+        int ou None: Índice da trajetória selecionada ou None.
+    """
+    
+    print("DEBUG - clickData recebido:", clickData)  # DEBUG
+    
+    # Se clicou no mapa mas não em um ponto de dados válido (clique em área vazia)
+    if not clickData or 'points' not in clickData or len(clickData['points']) == 0:
+        print("DEBUG - Clique em área vazia, desselecionando")  # DEBUG
+        return None  # Desseleciona
+    
+    point_data = clickData['points'][0]
+    print("DEBUG - point_data:", point_data)  # DEBUG
+    
+    # Tenta extrair informação da trajetória do hover text ou do legendgroup
+    hover_text = point_data.get('hovertext', '')
+    legend_group = point_data.get('legendgroup', '')
+    
+    print(f"DEBUG - hover_text: '{hover_text}', legend_group: '{legend_group}'")  # DEBUG
+    
+    # Tenta extrair o índice de trajetória do legendgroup (formato: "traj5" ou "movelets123")
+    if 'traj' in legend_group:
+        match = re.search(r'traj(\d+)', legend_group)
+        if match:
+            traj_index = int(match.group(1))
+            print(f"DEBUG - Encontrado traj_index via legend_group: {traj_index}")  # DEBUG
+            return traj_index
+    
+    # Tenta extrair do hover text (formato: "T.123 p5")
+    if 'T.' in hover_text:
+        match = re.search(r'T\.(\d+)', hover_text)
+        if match:
+            tid = match.group(1)
+            print(f"DEBUG - Encontrado tid via hover_text: {tid}")  # DEBUG
+            # Tenta encontrar o índice correspondente ao tid na lista de trajetórias
+            return tid
+    
+    print("DEBUG - Não conseguiu extrair trajetória")  # DEBUG
+    return dash.no_update
+
+# Callback para atualizar os inputs quando uma trajetória é selecionada
+@app.callback(
+    Output('inicio-input', 'value'),
+    Output('fim-input', 'value'),
+    Input('selected-trajectory', 'data'),
+    State('store-data', 'data'),
+    prevent_initial_call=True
+)
+def atualizar_inputs_com_selecao(traj_selecionada, json_data):
+    """Atualiza os inputs de início e fim quando uma trajetória é selecionada.
+    
+    Args:
+        traj_selecionada: Índice da trajetória selecionada ou None para desselecionar.
+        json_data: Dados do upload (se houver).
+        
+    Returns:
+        tuple: (novo_inicio, novo_fim)
+    """
+    
+    print(f"DEBUG - atualizar_inputs_com_selecao chamado com traj_selecionada: {traj_selecionada}")  # DEBUG
+    
+    if traj_selecionada is None:
+        # Desselecionar - volta aos valores padrão
+        print("DEBUG - Desselecionando, voltando para 0-10")  # DEBUG
+        return 0, 10
+    
+    # Se é um inteiro, é um índice direto
+    if isinstance(traj_selecionada, int):
+        print(f"DEBUG - Selecionando trajetória índice {traj_selecionada}")  # DEBUG
+        return traj_selecionada, traj_selecionada
+    
+    # Se é uma string, é um tid (id da trajetória)
+    if isinstance(traj_selecionada, str):
+        print(f"DEBUG - Procurando índice para tid {traj_selecionada}")  # DEBUG
+        # Carrega trajetórias para encontrar o índice correspondente
+        if json_data is not None:
+            df_base = pd.read_json(StringIO(json_data), orient='split')
+            T_local, _ = df2trajectory(
+                df_base,
+                data_desc=None,
+                tid_col='tid',
+                label_col='label'
+            )
+        else:
+            T_local = T
+        
+        # Procura pelo tid na lista de trajetórias
+        for i, traj in enumerate(T_local):
+            if str(traj.tid) == str(traj_selecionada):
+                print(f"DEBUG - Encontrado tid {traj_selecionada} no índice {i}")  # DEBUG
+                return i, i
+        
+        print(f"DEBUG - Tid {traj_selecionada} não encontrado")  # DEBUG
+    
+    print("DEBUG - PreventUpdate")  # DEBUG
+    raise dash.exceptions.PreventUpdate
 
 if __name__ == '__main__':  # Só executa quando rodar o script diretamente
     app.run(debug=True)  # Roda o servidor do Dash em modo debug para desenvolvimento
