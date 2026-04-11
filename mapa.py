@@ -9,7 +9,6 @@
 from io import StringIO
 import dash  # Importa a biblioteca Dash para criação da aplicação web interativa
 from collections import defaultdict
-from math import cos, sin, pi
 import plotly.graph_objects as go  # Importa plotly.graph_objects para gráficos customizados
 from dash import Dash, dcc, html, Input, Output, State  # Importa componentes do Dash para construir layout e callbacks
 import os
@@ -78,6 +77,7 @@ app.layout = html.Div([  # Define layout principal como uma Div
                 min=0,
                 step=1,
                 value=0,
+                debounce=True,
                 style={"width": "100px"}
             ),
             html.Span(" até "),
@@ -87,6 +87,7 @@ app.layout = html.Div([  # Define layout principal como uma Div
                 min=0,
                 step=1,
                 value=10,
+                debounce=True,
                 style={"width": "100px"}
             ),
         ], style={"marginBottom": "5px"}),
@@ -98,7 +99,6 @@ app.layout = html.Div([  # Define layout principal como uma Div
  
     dcc.Graph(id='mapa', style={'height': '700px'}, config={'scrollZoom': True}), # Componente gráfico para mostrar o mapa
 ])
-
 
 
 #-------------------------------------------------------------------------
@@ -208,19 +208,20 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
     all_lats = []  # Lista para armazenar todas latitudes dos pontos para centralizar mapa
     all_lons = []  # Lista para armazenar todas longitudes
     
-    # Contagem para pontos que ficam exatamente no mesmo local
-    location_counts = defaultdict(int)
-    
     print("Quantidade de trajetórias:", len(T_local))
 
-    if inicio is None:
-        inicio = 0
-    if fim is None:
-        fim = len(T_local) - 1
-    inicio = max(0, int(inicio))
-    fim = min(len(T_local) - 1, int(fim))
-    single_mode = inicio == fim
-    
+    inicio, fim = fca.normalizar_intervalo_trajetorias(inicio, fim, len(T_local))
+
+    if fim < inicio:
+        fig.update_layout(
+            map_style="open-street-map",
+            margin={"r": 0, "t": 30, "l": 0, "b": 0},
+            height=700,
+            title="Múltiplas Trajetórias no Mapa",
+            showlegend=True
+        )
+        return fig
+
     for i in range(inicio, fim + 1):
         traj = T_local[i]
         
@@ -250,18 +251,10 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
         # Cor padrão da trajetória (mantém cor original, e highlight vermelho só para segmentos de movelet)
         cor_traj = cores[i % len(cores)]
         espessura = 2
-
-        hover_texts = []  # Lista que conterá o texto do tooltip para cada ponto
-        marker_lats = []
-        marker_lons = []
+        pontos_traj_por_local = defaultdict(list)
 
         for j, p in enumerate(traj.points):  # Para cada ponto na trajetória
-            
-            # Nome do local (aspecto 3)
-            try:
-                titulo_local = f"{p.aspects[3].value}"
-            except:
-                titulo_local = "Local"
+            titulo_local = fca.obter_titulo_local(p, data_desc_local)
 
             # Lista de movelets que incluem este ponto
             movelet_nums = []
@@ -285,43 +278,40 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
             else:
                 titulo = f"T.{traj.tid} p{j+1}<br>{titulo_local}"
 
-            # Monta linhas com colunas selecionadas e marca [M*] apenas nos atributos que pertencem à movelet
-            partes = []
+            atributos_ponto = {}
+            movelets_por_atributo = {}
             for c in colunas_selecionadas:
                 valor = str(fca.extrair_valor(c, p, data_desc_local))
-                
-                # Verifica se o atributo atual pertence a alguma movelet do ponto
-                mostra_movelet = False
+
+                movelets_do_atributo = []
                 if c not in ['lat', 'lon', 'Ponto'] and movelets_do_ponto:
                     for idx_mov, mov_info in enumerate(movelets_info):
                         if mov_info['start'] <= j <= mov_info['end']:
                             mov_obj = mov_info.get('movelet')
-                            # Verifica se a coluna atual está nos atributos da movelet
                             if mov_obj is not None and hasattr(mov_obj, 'attribute_names'):
                                 if c in mov_obj.attribute_names:
-                                    mostra_movelet = True
-                                    break
-                
-                if mostra_movelet:
-                    valor += f" [{', '.join(movelets_do_ponto)}]"
-                
-                partes.append(f"{c}: {valor}")
+                                    if mov_obj is not None and hasattr(mov_obj, 'mid'):
+                                        try:
+                                            movelet_num = int(mov_obj.mid) + 1
+                                        except Exception:
+                                            movelet_num = idx_mov + 1
+                                    else:
+                                        movelet_num = idx_mov + 1
+                                    movelets_do_atributo.append(f"M.{movelet_num}")
 
-            texto = "<br>".join([titulo] + partes)
+                atributos_ponto[c] = valor
+                movelets_por_atributo[c] = sorted(set(movelets_do_atributo))
+
             point_key = (lats[j], lons[j])
-            location_counts[point_key] += 1
-            count = location_counts[point_key]
-            display_lat = lats[j]
-            display_lon = lons[j]
-            if count > 1:
-                angle = 2 * pi * (count - 1) / 6
-                radius = 0.00003 * ((count - 1) // 6 + 1)
-                display_lon += radius * cos(angle)
-                display_lat += radius * sin(angle)
-
-            marker_lats.append(display_lat)
-            marker_lons.append(display_lon)
-            hover_texts.append(texto)
+            pontos_traj_por_local[point_key].append({
+                "traj_tid": traj.tid,
+                "point_index": j,
+                "titulo": titulo,
+                "titulo_local": titulo_local,
+                "atributos": atributos_ponto,
+                "movelets_por_atributo": movelets_por_atributo,
+                "cor_traj": cor_traj,
+            })
 
         # Desenha a trajetória completa como base (sinaliza no nome se há movelet)
         label_traj = f"Trajetória {traj.tid}"
@@ -339,12 +329,21 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
             showlegend=True
         ))
 
+        marker_lats = []
+        marker_lons = []
+        hover_texts = []
+
+        for (lat, lon), registros in pontos_traj_por_local.items():
+            marker_lats.append(lat)
+            marker_lons.append(lon)
+            hover_texts.append(fca.montar_hover_ponto_grupo(registros, colunas_selecionadas))
+
         fig.add_trace(go.Scattermap(
             mode='markers',
             lon=marker_lons,
             lat=marker_lats,
             marker={'size': 12, 'color': cor_traj, 'opacity': 0.9, 'symbol': 'circle', 'allowoverlap': True},
-            name=f'Pontos {traj.tid}',
+            name=f'Pontos trajetória {traj.tid}',
             legendgroup=f"traj{i}",
             hovertext=hover_texts,
             hovertemplate="%{hovertext}<extra></extra>",
@@ -491,14 +490,16 @@ def process_uploaded_file(contents, filename, date):
     Input('store-data', 'data'), # Novo input para o JSON do DataFrame carregado
     Input('remover-button', 'n_clicks'), # Novo input para o botão de controle
     Input('preencher-todos-button', 'n_clicks'), # Novos inputs para os botões de controle
+    State('filtros-hover', 'value'),
 )
-def controlar_dropdown(json_data, n_remover, n_preencher): # Função para controlar opções do dropdown com base no upload e botões de controle
+def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Função para controlar opções do dropdown com base no upload e botões de controle
     """Controla as opções do dropdown de filtros baseado no upload e botões.
 
     Args:
         json_data (str): Dados JSON do arquivo carregado.
         n_remover (int): Cliques no botão remover.
         n_preencher (int): Cliques no botão preencher.
+        valores_atuais (list): Colunas atualmente selecionadas no dropdown.
 
     Returns:
         tuple: (options, value) para o dropdown.
@@ -520,7 +521,12 @@ def controlar_dropdown(json_data, n_remover, n_preencher): # Função para contr
         df_upload = pd.read_json(StringIO(json_data), orient='split') # Converte JSON de volta para DataFrame
         colunas = [col for col in df_upload.columns if col not in ['tid', 'label']] # Exclui colunas de identificação e rótulo
         options = [{'label': col, 'value': col} for col in colunas] # Cria opções para o dropdown com base nas colunas do DataFrame carregado
-        return options, colunas # Seleciona todas as colunas do upload por padrão
+
+        if valores_atuais:
+            colunas_preservadas = [col for col in valores_atuais if col in colunas]
+            return options, colunas_preservadas
+
+        return options, colunas # Seleciona todas as colunas do upload apenas quando ainda não havia filtro definido
 
     # Remover
     if trigger == 'remover-button': # Se o botão "Remover Todas" foi clicado, desmarca todas as colunas
@@ -567,10 +573,11 @@ def atualizar_limites_inputs(json_data):
         T_local = T
 
     total = len(T_local)
+    ultimo_indice = max(0, total - 1)
 
-    texto_info = f"Total de trajetórias: {total}"
+    texto_info = f"Total de trajetórias: {total} | Índices válidos: 0 a {ultimo_indice}"
 
-    return total, total, texto_info
+    return ultimo_indice, ultimo_indice, texto_info
 
 # Callback para capturar cliques na legenda e selecionar uma trajetória
 @app.callback(
@@ -648,7 +655,19 @@ def atualizar_inputs_com_selecao(traj_selecionada, json_data):
     if traj_selecionada is None:
         # Desselecionar - volta aos valores padrão
         print("DEBUG - Desselecionando, voltando para 0-10")  # DEBUG
-        return 0, 10
+        if json_data is not None:
+            df_base = pd.read_json(StringIO(json_data), orient='split')
+            T_local, _ = df2trajectory(
+                df_base,
+                data_desc=None,
+                tid_col='tid',
+                label_col='label'
+            )
+        else:
+            T_local = T
+
+        _, fim = fca.normalizar_intervalo_trajetorias(0, 10, len(T_local))
+        return 0, fim
     
     # Se é um inteiro, é um índice direto
     if isinstance(traj_selecionada, int):

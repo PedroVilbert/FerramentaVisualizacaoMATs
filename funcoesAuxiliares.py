@@ -6,13 +6,15 @@ Contém:
 - extrair_valor: extrai valores de atributos de pontos de trajetórias
 """
 
+import pandas as pd
+
 
 def icone_avaliacao(av):  # Função para converter valor numérico de avaliação em estrelas
     """Retorna uma string de avaliação em formato de estrelas (5) com suporte a meia estrela.
 
     av pode ser None, 0, '-' ou strings de NaN. O valor numérico é dividido por 2 para escala 0-5.
     """
-    
+
     if av is None or av == 0 or av == "-" or av == "Nan" or av == "NaN": # Verifica se a avaliação é nula, zero ou "Nan"
         return "\t -"  # Retorna símbolo de ausência de avaliação
     else:
@@ -102,6 +104,189 @@ def extrair_valor(coluna, p, data_desc):  # Função que retorna o valor de uma 
         return icones_clima(valor)
 
     return valor
+
+
+def extrair_valores_limpos_unicos(valores):
+    """Remove vazios e repeticoes preservando a ordem."""
+    valores_limpos = []
+    vistos = set()
+
+    for valor in valores:
+        valor_str = str(valor).strip()
+        if not valor_str or valor_str.lower() in {"none", "nan"}:
+            continue
+        if valor_str not in vistos:
+            vistos.add(valor_str)
+            valores_limpos.append(valor_str)
+
+    return valores_limpos
+
+
+def formatar_valor_unico(valores):
+    """Formata valores unicos para exibicao no tooltip."""
+    valores_limpos = extrair_valores_limpos_unicos(valores)
+
+    if not valores_limpos:
+        return "-"
+
+    if len(valores_limpos) == 1:
+        return valores_limpos[0]
+
+    return "{" + ", ".join(valores_limpos) + "}"
+
+
+def coluna_parece_temporal(coluna):
+    """Heuristica simples para colunas de data/hora."""
+    coluna_lower = str(coluna).strip().lower()
+    termos_temporais = ["time", "date", "datetime", "timestamp", "hour", "minute", "second"]
+    return any(termo in coluna_lower for termo in termos_temporais)
+
+
+def formatar_intervalo_temporal(valores):
+    """Resume valores temporais como intervalo <inicio ... fim>."""
+    valores_limpos = extrair_valores_limpos_unicos(valores)
+    if not valores_limpos:
+        return "-"
+
+    if len(valores_limpos) == 1:
+        return valores_limpos[0]
+
+    serie = pd.to_datetime(pd.Series(valores_limpos), errors="coerce")
+    if serie.isna().any():
+        return None
+
+    pares = list(zip(valores_limpos, serie.tolist()))
+    pares_ordenados = sorted(pares, key=lambda item: item[1])
+    inicio = pares_ordenados[0][0]
+    fim = pares_ordenados[-1][0]
+
+    if inicio == fim:
+        return inicio
+
+    return f"<{inicio} ... {fim}>"
+
+
+def formatar_valor_atributo(coluna, valores):
+    """Formata valores de atributo, usando intervalo para dados temporais."""
+    if coluna_parece_temporal(coluna):
+        intervalo = formatar_intervalo_temporal(valores)
+        if intervalo is not None:
+            return intervalo
+
+    return formatar_valor_unico(valores)
+
+
+def formatar_codigos_atributo(traj_tid, movelets):
+    """Formata codigos de movelets para o fim da linha."""
+    movelets_formatadas = formatar_valor_unico(movelets)
+    if movelets_formatadas == "-":
+        return ""
+    return f"{movelets_formatadas}"
+
+
+def obter_titulo_local(ponto, data_desc_local):
+    """Tenta obter um titulo amigavel do ponto sem depender de atributo fixo."""
+    colunas_preferidas = ["poi", "place", "name", "location", "local"]
+
+    for coluna in colunas_preferidas:
+        try:
+            valor = str(extrair_valor(coluna, ponto, data_desc_local)).strip()
+        except Exception:
+            valor = ""
+
+        if valor and valor.lower() not in {"none", "nan"}:
+            return valor
+
+    try:
+        for aspecto in ponto.aspects:
+            valor = getattr(aspecto, "value", None)
+            if valor is None:
+                continue
+            valor_str = str(valor).strip()
+            if valor_str and valor_str.lower() not in {"none", "nan"}:
+                return valor_str
+    except Exception:
+        pass
+
+    return "Local"
+
+
+def montar_hover_ponto_grupo(registros, colunas_selecionadas):
+    """Monta hover para um ou mais pontos na mesma coordenada."""
+    if not registros:
+        return ""
+
+    traj_tid = registros[0]["traj_tid"]
+
+    if len(registros) == 1:
+        registro = registros[0]
+        partes = [registro["titulo"]]
+
+        for coluna in colunas_selecionadas:
+            valor = formatar_valor_atributo(coluna, [registro["atributos"].get(coluna, "-")])
+            movelets = registro["movelets_por_atributo"].get(coluna, [])
+            codigos = formatar_codigos_atributo(registro["traj_tid"], movelets)
+            if codigos:
+                partes.append(f"{coluna}: {valor} | {codigos}")
+            else:
+                partes.append(f"{coluna}: {valor}")
+
+        partes.append(f"Trajetória: T.{registro['traj_tid']}")
+        partes.append(f"Ponto: p{registro['point_index'] + 1}")
+
+        return "<br>".join(partes)
+
+    partes = [f"{len(registros)} pontos sobrepostos"]
+
+    pontos = formatar_valor_unico([f"p{r['point_index'] + 1}" for r in registros])
+
+    for coluna in colunas_selecionadas:
+        valores = [r["atributos"].get(coluna, "-") for r in registros]
+        movelets = []
+        for registro in registros:
+            movelets.extend(registro["movelets_por_atributo"].get(coluna, []))
+        valor_formatado = formatar_valor_atributo(coluna, valores)
+        codigos = formatar_codigos_atributo(traj_tid, movelets)
+        if codigos:
+            partes.append(f"{coluna}: {valor_formatado} | {codigos}")
+        else:
+            partes.append(f"{coluna}: {valor_formatado}")
+
+    partes.append(f"Trajetória: T.{traj_tid}")
+    partes.append(f"Pontos: {pontos}")
+
+    return "<br>".join(partes)
+
+
+def normalizar_intervalo_trajetorias(inicio, fim, total):
+    """Normaliza intervalo de trajetórias para índices válidos."""
+    if total <= 0:
+        return 0, -1
+
+    ultimo_indice = total - 1
+
+    if inicio is None:
+        inicio = 0
+    if fim is None:
+        fim = ultimo_indice
+
+    try:
+        inicio = int(inicio)
+    except (TypeError, ValueError):
+        inicio = 0
+
+    try:
+        fim = int(fim)
+    except (TypeError, ValueError):
+        fim = ultimo_indice
+
+    inicio = max(0, min(inicio, ultimo_indice))
+    fim = max(0, min(fim, ultimo_indice))
+
+    if inicio > fim:
+        inicio, fim = fim, inicio
+
+    return inicio, fim
 
 
 
