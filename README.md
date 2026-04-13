@@ -14,7 +14,6 @@ Este projeto implementa uma aplicação web interativa para visualização de tr
 ```
 EstudandoMathModel/
 ├── funcoesAuxiliares.py    # Funções auxiliares para formatação e extração
-├── inspecionar_movelet.py  # Script para inspeção de movelets
 ├── mapa.py                 # Aplicação principal Dash
 ├── mov.py                  # Módulo de descoberta e carregamento de movelets
 ├── uploadArquivo.py        # Parsing de arquivos carregados
