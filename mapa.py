@@ -51,17 +51,23 @@ app.layout = html.Div([  # Define layout principal como uma Div
         options=[],
         value=[],  # Opções pré-selecionadas no checklist
         multi=True, # permite multiplas opções
-        closeOnSelect=False,
         searchable=True
     ),
-    html.Button('Remover Todas', id='remover-button', n_clicks=0),  # Botão para desmarcar todas opções (inicia clicado)
-    html.Button('Preencher Todas', id='preencher-todos-button', n_clicks=0),  # Botão para marcar todas opções
-    
-    dcc.Upload(
-    id='upload-data',
-    children=html.Button('Upload File'),
-    multiple=False
-    ), #Botão de upload
+    html.Div([
+        html.Button('Remover Todas', id='remover-button', n_clicks=0),
+        html.Button('Preencher Todas', id='preencher-todos-button', n_clicks=0),
+        dcc.Upload(
+            id='upload-data',
+            children=html.Button('Upload File'),
+            multiple=False
+        ),
+    ], style={
+        'display': 'flex',
+        'gap': '10px',
+        'alignItems': 'center',
+        'flexWrap': 'wrap',
+        'marginTop': '10px'
+    }),
     html.Div(id='upload-output'),  # Aqui aparecerá o resultado (mensagem de sucesso/erro)
     dcc.Store(id='store-data', storage_type='memory'),
     dcc.Store(id='selected-trajectory', storage_type='memory', data=None),  # Store para trajetória selecionada
@@ -283,20 +289,23 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
                 valor = str(fca.extrair_valor(c, p, data_desc_local))
 
                 movelets_do_atributo = []
-                if c not in ['lat', 'lon', 'Ponto'] and movelets_do_ponto:
-                    for idx_mov, mov_info in enumerate(movelets_info):
-                        if mov_info['start'] <= j <= mov_info['end']:
-                            mov_obj = mov_info.get('movelet')
-                            if mov_obj is not None and hasattr(mov_obj, 'attribute_names'):
-                                if c in mov_obj.attribute_names:
-                                    if mov_obj is not None and hasattr(mov_obj, 'mid'):
-                                        try:
-                                            movelet_num = int(mov_obj.mid) + 1
-                                        except Exception:
+                if movelets_do_ponto:
+                    if c in ['lat', 'lon']:
+                        movelets_do_atributo.extend(movelets_do_ponto)
+                    elif c != 'Ponto':
+                        for idx_mov, mov_info in enumerate(movelets_info):
+                            if mov_info['start'] <= j <= mov_info['end']:
+                                mov_obj = mov_info.get('movelet')
+                                if mov_obj is not None and hasattr(mov_obj, 'attribute_names'):
+                                    if c in mov_obj.attribute_names:
+                                        if mov_obj is not None and hasattr(mov_obj, 'mid'):
+                                            try:
+                                                movelet_num = int(mov_obj.mid) + 1
+                                            except Exception:
+                                                movelet_num = idx_mov + 1
+                                        else:
                                             movelet_num = idx_mov + 1
-                                    else:
-                                        movelet_num = idx_mov + 1
-                                    movelets_do_atributo.append(f"M.{movelet_num}")
+                                        movelets_do_atributo.append(f"M.{movelet_num}")
 
                 atributos_ponto[c] = valor
                 movelets_por_atributo[c] = sorted(set(movelets_do_atributo))

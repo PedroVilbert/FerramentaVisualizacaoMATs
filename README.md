@@ -28,7 +28,7 @@ EstudandoMathModel/
 
 1. Clone o repositório:
    ```bash
-   git clone https://github.com/PedroVilbert/EstudandoMathModel.git
+   git clone https://github.com/PedroVilbert/FerramentaVisualizacaoMATs
    cd EstudandoMathModel
    ```
 
