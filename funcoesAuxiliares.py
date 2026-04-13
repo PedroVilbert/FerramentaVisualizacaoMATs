@@ -184,6 +184,33 @@ def formatar_codigos_atributo(traj_tid, movelets):
     return f"{movelets_formatadas}"
 
 
+def formatar_trajetorias_e_pontos(registros):
+    """Agrupa trajetorias e pontos para exibicao em locais sobrepostos."""
+    agrupado = {}
+
+    for registro in registros:
+        traj_label = f"T.{registro['traj_tid']}"
+        ponto_label = f"p{registro['point_index'] + 1}"
+        agrupado.setdefault(traj_label, []).append(ponto_label)
+
+    partes = []
+    for traj_label, pontos in agrupado.items():
+        partes.append(f"{traj_label}: {formatar_valor_unico(pontos)}")
+
+    if not partes:
+        return "-"
+
+    if len(partes) == 1:
+        return partes[0]
+
+    return " | ".join(partes)
+
+
+def filtrar_colunas_tooltip(colunas_selecionadas):
+    """Remove colunas redundantes da tooltip."""
+    return [coluna for coluna in colunas_selecionadas if str(coluna).strip().lower() != "space"]
+
+
 def obter_titulo_local(ponto, data_desc_local):
     """Tenta obter um titulo amigavel do ponto sem depender de atributo fixo."""
     colunas_preferidas = ["poi", "place", "name", "location", "local"]
@@ -216,13 +243,14 @@ def montar_hover_ponto_grupo(registros, colunas_selecionadas):
     if not registros:
         return ""
 
+    colunas_tooltip = filtrar_colunas_tooltip(colunas_selecionadas)
     traj_tid = registros[0]["traj_tid"]
 
     if len(registros) == 1:
         registro = registros[0]
         partes = [registro["titulo"]]
 
-        for coluna in colunas_selecionadas:
+        for coluna in colunas_tooltip:
             valor = formatar_valor_atributo(coluna, [registro["atributos"].get(coluna, "-")])
             movelets = registro["movelets_por_atributo"].get(coluna, [])
             codigos = formatar_codigos_atributo(registro["traj_tid"], movelets)
@@ -231,16 +259,12 @@ def montar_hover_ponto_grupo(registros, colunas_selecionadas):
             else:
                 partes.append(f"{coluna}: {valor}")
 
-        partes.append(f"Trajetória: T.{registro['traj_tid']}")
-        partes.append(f"Ponto: p{registro['point_index'] + 1}")
 
         return "<br>".join(partes)
 
-    partes = [f"{len(registros)} pontos sobrepostos"]
+    partes = [f"Trajetorias/Pontos: {formatar_trajetorias_e_pontos(registros)}"]
 
-    pontos = formatar_valor_unico([f"p{r['point_index'] + 1}" for r in registros])
-
-    for coluna in colunas_selecionadas:
+    for coluna in colunas_tooltip:
         valores = [r["atributos"].get(coluna, "-") for r in registros]
         movelets = []
         for registro in registros:
@@ -251,9 +275,6 @@ def montar_hover_ponto_grupo(registros, colunas_selecionadas):
             partes.append(f"{coluna}: {valor_formatado} | {codigos}")
         else:
             partes.append(f"{coluna}: {valor_formatado}")
-
-    partes.append(f"Trajetória: T.{traj_tid}")
-    partes.append(f"Pontos: {pontos}")
 
     return "<br>".join(partes)
 
@@ -287,6 +308,4 @@ def normalizar_intervalo_trajetorias(inicio, fim, total):
         inicio, fim = fim, inicio
 
     return inicio, fim
-
-
 

@@ -274,9 +274,8 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
 
             if movelets_do_ponto:
                 titulo = f"T.{traj.tid} p{j+1} - {' '.join([f'M[{n}]' for n in sorted(set(movelet_nums))])}"
-                titulo = f"{titulo}<br>{titulo_local}"
             else:
-                titulo = f"T.{traj.tid} p{j+1}<br>{titulo_local}"
+                titulo = f"T.{traj.tid} p{j+1}"
 
             atributos_ponto = {}
             movelets_por_atributo = {}
@@ -510,7 +509,7 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
     # Se não houve trigger ainda (primeira execução)
     if not ctx.triggered: # Se nenhum input disparou o callback, usa colunas do dataset inicial para preencher opções do dropdown
         # Usa o dataset inicial carregado no começo do script
-        colunas = [col for col in df.columns if col not in ['tid', 'label']] # Exclui colunas de identificação e rótulo
+        colunas = [col for col in df.columns if col not in ['tid', 'label', 'space']] # Exclui colunas de identificação e rótulo
         options = [{'label': col, 'value': col} for col in colunas] # Cria opções para o dropdown com base nas colunas do dataset inicial
         return options, colunas # Seleciona todas as colunas do dataset inicial por padrão
 
@@ -519,14 +518,10 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
     # Se veio do upload
     if trigger == 'store-data' and json_data is not None: # Se o trigger foi o upload e tem dados, atualiza opções com as colunas do dataset carregado
         df_upload = pd.read_json(StringIO(json_data), orient='split') # Converte JSON de volta para DataFrame
-        colunas = [col for col in df_upload.columns if col not in ['tid', 'label']] # Exclui colunas de identificação e rótulo
+        colunas = [col for col in df_upload.columns if col not in ['tid', 'label', 'space']] # Exclui colunas de identificação e rótulo
         options = [{'label': col, 'value': col} for col in colunas] # Cria opções para o dropdown com base nas colunas do DataFrame carregado
 
-        if valores_atuais:
-            colunas_preservadas = [col for col in valores_atuais if col in colunas]
-            return options, colunas_preservadas
-
-        return options, colunas # Seleciona todas as colunas do upload apenas quando ainda não havia filtro definido
+        return options, colunas # Reseta a seleção ao fazer upload e seleciona as colunas do novo arquivo
 
     # Remover
     if trigger == 'remover-button': # Se o botão "Remover Todas" foi clicado, desmarca todas as colunas
@@ -536,9 +531,9 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
     if trigger == 'preencher-todos-button': # Se o botão "Preencher Todas" foi clicado, seleciona todas as colunas disponíveis
         if json_data is not None: # Se tiver upload, usa colunas do dataset carregado
             df_upload = pd.read_json(StringIO(json_data), orient='split') # Se tiver upload, usa colunas do dataset carregado
-            colunas = [col for col in df_upload.columns if col not in ['tid', 'label']] # Se tiver upload, usa colunas do dataset carregado
+            colunas = [col for col in df_upload.columns if col not in ['tid', 'label', 'space']] # Se tiver upload, usa colunas do dataset carregado
         else: # Se não tiver upload, usa colunas do dataset inicial
-            colunas = [col for col in df.columns if col not in ['tid', 'label']] # Se não tiver upload, usa colunas do dataset inicial
+            colunas = [col for col in df.columns if col not in ['tid', 'label', 'space']] # Se não tiver upload, usa colunas do dataset inicial
 
         return dash.no_update, colunas # Retorna opções atuais mas seleciona todas as colunas
 
