@@ -50,6 +50,14 @@ def icones_clima(clima):  # Função para converter string clima em emoji corres
     return clima_icones.get(clima, '-')  # Retorna emoji ou '-' se não encontrado
 
 
+def obter_aspecto_espacial(p):
+    """Retorna o aspecto espacial do ponto, quando existir."""
+    for aspecto in getattr(p, "aspects", []):
+        if hasattr(aspecto, "x") and hasattr(aspecto, "y"):
+            return aspecto
+    return None
+
+
 def extrair_valor(coluna, p, data_desc):  # Função que retorna o valor de uma coluna para um ponto p da trajetória
     """Extrai o valor de uma coluna específica para um ponto de trajetória.
 
@@ -64,11 +72,13 @@ def extrair_valor(coluna, p, data_desc):  # Função que retorna o valor de uma 
     
     # Latitude (coordenada x)
     if coluna == "lat":
-        return p.aspects[0].x  
+        aspecto_espacial = obter_aspecto_espacial(p)
+        return aspecto_espacial.x if aspecto_espacial is not None else ""
     
     # Longitude (coordenada y)
     if coluna == "lon":
-        return p.aspects[0].y  
+        aspecto_espacial = obter_aspecto_espacial(p)
+        return aspecto_espacial.y if aspecto_espacial is not None else ""
 
     # Número sequencial do ponto
     if coluna == "Ponto":
@@ -308,4 +318,3 @@ def normalizar_intervalo_trajetorias(inicio, fim, total):
         inicio, fim = fim, inicio
 
     return inicio, fim
-

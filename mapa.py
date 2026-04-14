@@ -165,6 +165,8 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
             df_base["LAT"] = pd.to_numeric(df_base["LAT"], errors="coerce")
             df_base["LON"] = pd.to_numeric(df_base["LON"], errors="coerce")
             df_base = df_base.dropna(subset=["LAT", "LON"])
+            df_base["lat"] = df_base["LAT"]
+            df_base["lon"] = df_base["LON"]
             df_base["space"] = (
                 df_base["LAT"].astype(str) + " " +
                 df_base["LON"].astype(str)
@@ -184,8 +186,8 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
                 return go.Figure() # Retorna figura vazia
 
             # Converte para numérico, forçando erros a NaN, e depois remove linhas com NaN
-            df_base["lon"] = pd.to_numeric(coords[0], errors="coerce")
-            df_base["lat"] = pd.to_numeric(coords[1], errors="coerce")
+            df_base["lat"] = pd.to_numeric(coords[0], errors="coerce")
+            df_base["lon"] = pd.to_numeric(coords[1], errors="coerce")
 
             # Remove linhas onde não conseguiu extrair coordenadas válidas
             df_base = df_base.dropna(subset=["lat", "lon"])
@@ -235,17 +237,22 @@ def update_map(colunas_selecionadas, json_data, inicio, fim):  # Função que at
             continue
 
         # Descobre qual índice é o aspecto espacial
-        space_index = None
-        for idx, asp in enumerate(traj.points[0].aspects):
-            if hasattr(asp, "x") and hasattr(asp, "y"):
-                space_index = idx
-                break
+        aspecto_espacial = fca.obter_aspecto_espacial(traj.points[0])
 
-        if space_index is None:
+        if aspecto_espacial is None:
             continue  # não encontrou aspecto espacial
 
-        lats = [p.aspects[space_index].x for p in traj.points]
-        lons = [p.aspects[space_index].y for p in traj.points]
+        pontos_com_aspecto_espacial = []
+        for p in traj.points:
+            aspecto_ponto = fca.obter_aspecto_espacial(p)
+            if aspecto_ponto is not None:
+                pontos_com_aspecto_espacial.append(aspecto_ponto)
+
+        lats = [aspecto.x for aspecto in pontos_com_aspecto_espacial]
+        lons = [aspecto.y for aspecto in pontos_com_aspecto_espacial]
+
+        if not lats or not lons:
+            continue
             
         all_lats.extend(lats)  # Adiciona latitudes à lista geral
         all_lons.extend(lons)  # Adiciona longitudes à lista geral
@@ -519,6 +526,10 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
     if not ctx.triggered: # Se nenhum input disparou o callback, usa colunas do dataset inicial para preencher opções do dropdown
         # Usa o dataset inicial carregado no começo do script
         colunas = [col for col in df.columns if col not in ['tid', 'label', 'space']] # Exclui colunas de identificação e rótulo
+        if 'lat' not in colunas:
+            colunas.append('lat')
+        if 'lon' not in colunas:
+            colunas.append('lon')
         options = [{'label': col, 'value': col} for col in colunas] # Cria opções para o dropdown com base nas colunas do dataset inicial
         return options, colunas # Seleciona todas as colunas do dataset inicial por padrão
 
@@ -528,6 +539,11 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
     if trigger == 'store-data' and json_data is not None: # Se o trigger foi o upload e tem dados, atualiza opções com as colunas do dataset carregado
         df_upload = pd.read_json(StringIO(json_data), orient='split') # Converte JSON de volta para DataFrame
         colunas = [col for col in df_upload.columns if col not in ['tid', 'label', 'space']] # Exclui colunas de identificação e rótulo
+        if any(col in df_upload.columns for col in ['lat', 'lon', 'LAT', 'LON', 'space']):
+            if 'lat' not in colunas:
+                colunas.append('lat')
+            if 'lon' not in colunas:
+                colunas.append('lon')
         options = [{'label': col, 'value': col} for col in colunas] # Cria opções para o dropdown com base nas colunas do DataFrame carregado
 
         return options, colunas # Reseta a seleção ao fazer upload e seleciona as colunas do novo arquivo
@@ -541,8 +557,17 @@ def controlar_dropdown(json_data, n_remover, n_preencher, valores_atuais): # Fun
         if json_data is not None: # Se tiver upload, usa colunas do dataset carregado
             df_upload = pd.read_json(StringIO(json_data), orient='split') # Se tiver upload, usa colunas do dataset carregado
             colunas = [col for col in df_upload.columns if col not in ['tid', 'label', 'space']] # Se tiver upload, usa colunas do dataset carregado
+            if any(col in df_upload.columns for col in ['lat', 'lon', 'LAT', 'LON', 'space']):
+                if 'lat' not in colunas:
+                    colunas.append('lat')
+                if 'lon' not in colunas:
+                    colunas.append('lon')
         else: # Se não tiver upload, usa colunas do dataset inicial
             colunas = [col for col in df.columns if col not in ['tid', 'label', 'space']] # Se não tiver upload, usa colunas do dataset inicial
+            if 'lat' not in colunas:
+                colunas.append('lat')
+            if 'lon' not in colunas:
+                colunas.append('lon')
 
         return dash.no_update, colunas # Retorna opções atuais mas seleciona todas as colunas
 
@@ -709,4 +734,3 @@ if __name__ == '__main__':  # Só executa quando rodar o script diretamente
     
     
     
-
